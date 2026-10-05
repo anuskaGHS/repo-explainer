@@ -53,7 +53,7 @@ HEAD_CHARS = 1500
 OUTLINE_CHARS = 2000
 README_CHARS = 6000
 MAX_FILES = 15
-DEBUG_RAW_OUTPUT = True
+DEBUG_RAW_OUTPUT = False
 
 # Files that provide little architectural value for repository summarization
 LOW_VALUE_PATTERNS = [
