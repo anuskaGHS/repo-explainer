@@ -1,12 +1,44 @@
 """Streamlit web interface for the Local GitHub Repository Code Explainer."""
 
 import html
+import os
 import re
 import requests
 import streamlit as st
 
-# Application Configuration
-BACKEND_URL = "http://127.0.0.1:8000"
+DEFAULT_BACKEND_URL = "http://127.0.0.1:8000"
+
+
+def resolve_backend_url() -> tuple[str, bool]:
+    """Resolve BACKEND_URL from st.secrets, environment variables, or default.
+
+    Resolution order:
+    1. st.secrets["BACKEND_URL"] if it exists
+    2. BACKEND_URL environment variable
+    3. Default: "http://127.0.0.1:8000"
+
+    Returns:
+        tuple[str, bool]: (resolved_url, is_explicitly_configured)
+    """
+    # a) st.secrets["BACKEND_URL"] (wrapped in try/except because st.secrets can raise when missing)
+    try:
+        if hasattr(st, "secrets") and "BACKEND_URL" in st.secrets:
+            val = str(st.secrets["BACKEND_URL"]).strip()
+            if val:
+                return val.rstrip("/"), True
+    except Exception:
+        pass
+
+    # b) BACKEND_URL environment variable
+    env_val = os.environ.get("BACKEND_URL", "").strip()
+    if env_val:
+        return env_val.rstrip("/"), True
+
+    # c) Default localhost
+    return DEFAULT_BACKEND_URL, False
+
+
+BACKEND_URL, IS_EXPLICIT_BACKEND_URL = resolve_backend_url()
 REQUEST_TIMEOUT = 1200  # 20 minutes for large codebases and local inference
 
 st.set_page_config(
@@ -313,6 +345,33 @@ def check_backend_status() -> bool:
         return False
 
 
+def render_demo_info_card() -> None:
+    """Render a calm, neutral info card when running in UI demo mode with a local backend."""
+    st.markdown(
+        """
+        <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-left: 5px solid #64748B; border-radius: 14px; padding: 1.25rem 1.5rem; margin: 1rem 0; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);">
+            <div style="display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem;">
+                <span style="font-size: 1.2rem;">ℹ️</span>
+                <h3 style="font-size: 1.05rem; font-weight: 700; color: #1E293B; margin: 0;">UI demo: backend runs locally</h3>
+            </div>
+            <p style="font-size: 0.92rem; color: #475569; margin: 0 0 0.75rem 0; line-height: 1.55;">
+                This app needs the FastAPI backend and a local Ollama model (<code>llama3:8b</code>) running on your own machine, so the live page shows the interface only.
+            </p>
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 0.75rem; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.85rem; color: #0F172A; line-height: 1.6;">
+                <span style="color: #64748B;"># 1. Keep Ollama running in the background:</span><br>
+                ollama serve<br><br>
+                <span style="color: #64748B;"># 2. Start the FastAPI backend:</span><br>
+                <strong>uvicorn backend.main:app</strong>
+            </div>
+            <div style="font-size: 0.88rem; color: #64748B;">
+                📖 For step-by-step setup instructions, see the <a href="https://github.com/anuskaGHS/repo-explainer#quick-start-for-evaluators" target="_blank" style="color: #2563EB; font-weight: 600; text-decoration: underline;">Quick Start for Evaluators</a> section on GitHub.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def parse_explanation_sections(text: str) -> dict[str, str] | None:
     """Parse explanation markdown into four discrete sections."""
     headings = [
@@ -433,11 +492,12 @@ if "repo_url_input" not in st.session_state:
 
 # Check live backend connection for status pill
 backend_is_up = check_backend_status()
-status_pill = (
-    '<span class="badge-pill status-ok">🟢 Backend API Connected</span>'
-    if backend_is_up
-    else '<span class="badge-pill" style="background:#FEF2F2;border-color:#FECACA;color:#B91C1C;">🔴 Backend Offline</span>'
-)
+if backend_is_up:
+    status_pill = '<span class="badge-pill status-ok">🟢 Backend API Connected</span>'
+elif not IS_EXPLICIT_BACKEND_URL:
+    status_pill = '<span class="badge-pill" style="background:#FEF2F2; border-color:#FECACA; color:#B91C1C;">🔴 Backend Offline &middot; runs locally</span>'
+else:
+    status_pill = '<span class="badge-pill" style="background:#FEF2F2; border-color:#FECACA; color:#B91C1C;">🔴 Backend Offline</span>'
 
 # 1. Enhanced Brand Header
 st.markdown(
@@ -518,6 +578,10 @@ with st.container(border=True):
             st.rerun()
 
 
+# Show calm neutral info card when backend is unreachable on localhost default
+if not backend_is_up and not IS_EXPLICIT_BACKEND_URL and not start_analysis:
+    render_demo_info_card()
+
 # Trigger Analysis Logic
 if start_analysis:
     clean_url = input_url.strip()
@@ -558,12 +622,15 @@ if start_analysis:
                         st.error(f"⚠️ **Backend Error ({response.status_code}):** {detail}")
 
             except requests.exceptions.ConnectionError:
-                st.error(
-                    "⚠️ **Cannot connect to the backend server.**\n\n"
-                    f"The FastAPI server is not reachable at `{BACKEND_URL}`. "
-                    "Start it in your PowerShell terminal using:\n\n"
-                    "```powershell\nuvicorn backend.main:app --reload\n```"
-                )
+                if not IS_EXPLICIT_BACKEND_URL:
+                    render_demo_info_card()
+                else:
+                    st.error(
+                        "⚠️ **Cannot connect to the backend server.**\n\n"
+                        f"The FastAPI server is not reachable at `{BACKEND_URL}`. "
+                        "Start it in your PowerShell terminal using:\n\n"
+                        "```powershell\nuvicorn backend.main:app --reload\n```"
+                    )
             except requests.exceptions.Timeout:
                 st.error(
                     f"⏱️ **The request timed out after {REQUEST_TIMEOUT} seconds.**\n\n"
